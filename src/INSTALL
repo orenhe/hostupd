@@ -1,7 +1,11 @@
 Installation
 ------------
 
-HOSTUPD
+REQUIRES perl Net::DNS module:
+Debian Based: apt-get install libnet-dns-perl
+RedHat Based: yum install perl-Net-DNS
+
+INSTALLING
 There's nothing special you should do in order to install hostupd, you can just
 untar it and use the script. Make sure that the perl module (hostupd_conf.pm)
 is found in the same directory of the perl script itself.

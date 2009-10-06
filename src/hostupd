@@ -412,7 +412,8 @@ sub getSOA($)
 	my ($domain) = @_;
 	
 	my $res = new Net::DNS::Resolver;
-	
+
+        $res->nameservers(@dns_servers);
 
 	my $packetData = $res->send($domain, "SOA");
 
