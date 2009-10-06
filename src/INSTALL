@@ -1,0 +1,47 @@
+Installation
+------------
+
+HOSTUPD
+There's nothing special you should do in order to install hostupd, you can just
+untar it and use the script. Make sure that the perl module (hostupd_conf.pm)
+is found in the same directory of the perl script itself.
+You can use 'make install' to put everything in /usr/local (modify the Makefile
+for some other prefix..)
+
+
+
+CONFIGURING BIND FOR DYNAMIC UPDATES
+Your dns daemon should be properly-configured to allow hostupd to send
+updates. So far I've only used bind- if you can send me instructions for
+another dns daemon configuration I'll be glad to add them here.
+Anyway, This is how I configured my bind to allow updates (named.conf):
+
+1. I defined an acl- a group of trusted IPs which can update my dns:
+---
+acl "updaters" {
+        127.0.0.1;
+        192.168.0.1;
+};
+---
+
+2. Added an 'allow-update' phrase to my zone settings. here're my zone
+settings:
+---
+zone "foo.bar" in {
+        type master;
+        file "foo.bar.zone";
+        allow-update { updaters; };
+};
+---
+
+Some notes:
+1. You can skip step 1, and specify the list of IPs inside the 'allow-update'
+line. I think it's more messy though, especially if you have more than one
+zone.
+
+2. The zone type must be 'master' when using the 'allow-update' phrase. It even
+makes sense if you'll think about it.
+
+3. It's not too secure to allow a specific IP to send updates, without any
+additional checks. That's why bind added an option to use a key (shared secret)
+for authentication- unfortunately hostupd doesn't support it yet.

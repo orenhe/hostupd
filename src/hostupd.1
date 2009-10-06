@@ -1,0 +1,79 @@
+.TH hostupd 1 "Jan 2002" "Host Update 0.9"
+.SH NAME
+hostupd - Update a dns record using the ddns protocol
+.SH USAGE
+hostupd add <domain[.full.suffix.]> <rdata> [options]
+.BR
+hostupd del <domain[.full.suffix.]> [rdata] [options]
+.SH DESCRIPTION
+hostupd is a command-line tool which allows the user to update a dns server which supports dynamic updates (rfc2136), such as bind >= 8. Its main goal is to simplify the dns-updating task, but to remain flexible.
+hostupd is a perl script and requires the Net::DNS perl module in order to operate.
+.SH PARAMETERS
+.TP
+.BI domain
+The domain name should be specified here. The script will automatically add the default domain suffix to the end of the hostname, but if you want to specify the Fully Qualified Domain Name, don't forget the . in the end. e.g: 'test.foo.bar.'
+.TP
+.B rdata
+The record data, for example the address when using an A record, or a text string when using a TXT record. Note that on del mode an rdata field is optional- if rdata is NOT specified ALL the records of the specified type (or A by default) are getting deleted.
+.SH OPTIONS
+.TP
+.BI \-f
+Force mode on: Don't stop on errors when possible.
+.TP
+.BI \-h\ \-\-help
+Display a short help screen.
+.TP
+.BI \-l\ <ttl>
+Set a TTL (Time To Live) value of the record, overriding the DNS server's default.
+.TP
+.BI \-n
+Do-nothing mode on: Work as usual, just don't commit the changes to the name server.
+.TP
+.BI \-p
+Do
+.B NOT
+add a PTR record automatically when adding an A record. Add just the A record.
+Same goes for deleting an A record. with -p it won't delete the PTR as well.
+.TP
+.BI \-q
+Quiet mode on: display nothing but error messages.
+.TP
+.BI \-s\ <server>
+Specify a DNS server, overriding the default.
+.TP
+.BI \-t\ <type>
+Set the record type to change (both add or remove). If
+.B \-t
+isn't used, A record is used as default.
+.TP
+.BI \-u
+Update a record if it already exists: actually deletes the current record and then adds the user's requested record.
+.TP
+.BI \-v
+Verbose mode on: Shows much more [debug] info to the user.
+.TP
+.BI \-z
+Specify the zone to use, overriding the default zone.
+.SH EXAMPLES
+.TP
+.B hostupd add domain 192.168.0.1
+Adds an A record to the given domain. If -p isn't used, the script automatically adds a PTR record (for reverse resoutions) also.
+.TP
+.B hostupd add domain test -t TXT -l 3600
+Adds a TXT record to the domain, which contains the string 'test', and has a TTL of 3600 seconds.
+.TP
+.B hostupd del domain
+Deletes all the
+.B A
+records of the given domain.
+.TP
+.B hostupd del domain 192.168.0.1
+Deletes the
+.B A
+record which contains 192.168.0.1 of the given domain.
+.TP
+.B hostupd del domain.foo.bar. -t MX
+Deletes all the MX records of the given domain (here we decided to use the FQDN. note the dot at the end, which must apear when we don't want to add the default domain suffix)
+.SH AUTHOR
+The script was written by Oren Held,
+oren at deot.net.

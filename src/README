@@ -1,0 +1,41 @@
+Hostupd
+-------
+
+WHAT IS HOSTUPD?
+hostupd is a command-line tool which allows the user to update a dns server
+which supports dynamic updates (rfc2136), such as bind >= 8. Its main goal
+is to simplify the dns-updating task, but to remain flexible.
+
+
+FEATURES
+Hostupd actually does what bind's nsupdate does, but contains additional
+features which hopefully will make your life easier:
+- Fast deletion of all the records of some type with a simple command
+  (hostupd del domainname).
+- Makes sure that your change was indeed commited, and lets you know if it
+  wasn't.
+- Friendly commands (hostupd add domainname 192.168.0.1).
+- Simple updates (hostupd add domainname 192.168.0.2 -u).
+- Automatically updates the PTR records when adding an A record, unless
+  disabled.
+and some more..
+
+
+REQUIREMENTS
+Hostupd was tested with bind 9, but should work with any dns server which
+implements the Dynamic DNS rfc well. Also, a perl with Net::DNS module is 
+needed. Get it from cpan.org.
+
+
+INSTALLATION
+See the 'INSTALL' file.
+
+
+LICENSE
+hostupd is released under the GPL, see the 'COPYING' file.
+
+
+CONTACT/AUTHOR
+For any comment/suggestion/bugs/money, feel free to email me to
+oren@deot.net
+

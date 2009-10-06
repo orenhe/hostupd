@@ -1,0 +1,785 @@
+#!/usr/bin/perl -w
+
+##############################################################################
+#
+# HOSTUPD                                       
+# This perl script allows adding stuff to the dns using Dynamic DNS (RFC 2136)
+# Copyright (C) 2002  Oren Held
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+#
+##############################################################################
+
+# First, find were we run from and add it to @INC so we can load modules
+BEGIN {
+	use FindBin qw($Bin); push(@INC, $Bin);
+}
+
+# TODO
+# - Think of a better when-to-commit/$modified strategy..
+# - make all the ptr record thingie work better (also check if exists before adding/deling!)
+# - Why first add ptr record?
+
+# - fix problems with messing with subdomain (ns records and all)
+# - use more modules
+# - better look of the output
+# - Add "upd" as an allowed operation
+# - think of a better way for adding values for mx records and such
+
+
+use Net::DNS;
+use FileHandle;
+use strict;
+use hostupd_conf;
+
+
+# {{{ Some definitions
+my %allowed_operations = ( "add" => hostupd_conf::OPERATION_ADD, "del" => hostupd_conf::OPERATION_DEL );
+my $modified = 0; # We commit at end ONLY if modified is true
+my $operation; # should be one of the ones set in @operations
+my $zone; # the zone to use
+my $forceMode = 0; # if true, we use 'force' mode
+my $ttl = ""; # the TTL value for the record, if set
+my $testOnly = 0; # If true, changes aren't commited.
+my $noptr = 0; # If true, we add no PTR records automatically after adding A records
+my @dns_servers; # One or more dns server that we use
+my $record_type; # The RR Type (i.e. CNAME) that we modify this time
+my $updateMode = 0; # If true, we are updating (deleting old value and then adding)
+my $verbosity = hostupd_conf::VERBOSITY_NORMAL; # Set the verbosity level
+my $domain_name; # The hostname (actually domain name) that we modify
+my $rdata; # The data we modify in the domain (i.e. if A record, the IP)
+# }}} End of definitions
+
+
+# /
+# / General stuff (non dns related)
+# /
+
+#
+# {{{ exitError() Handles the errors.. displays messages and quits
+#
+sub exitError
+{
+	#TODO: Why to pass all the IFs, this is stooped
+	
+	my ($errorNum, $additional_str) = @_;
+	my $errorStr;
+
+	if ($errorNum == hostupd_conf::ERROR_WRONGOP)			{ $errorStr = "A wrong operation was chosen"; }
+	if ($errorNum == hostupd_conf::ERROR_NOHOST)			{ $errorStr = "No hostname is defined.."; }
+	if ($errorNum == hostupd_conf::ERROR_NORDATA)			{ $errorStr = "No rdata is defined.."; }
+	if ($errorNum == hostupd_conf::ERROR_ALREADY_EXISTS_ADD)	{ $errorStr = "Not adding: ".$additional_str.".\n  Maybe you want to use -f (force) or -u (update)?"; }
+	if ($errorNum == hostupd_conf::ERROR_DNS_CRITICAL)		{ $errorStr = "Critical error updating the DNS: ". $additional_str; }
+	if ($errorNum == hostupd_conf::ERROR_DNS_CANT_UPDATE)		{ $errorStr = "Can't update the DNS: ". $additional_str; }
+	if ($errorNum == hostupd_conf::ERROR_NO_PTR_ZONE)		{ $errorStr = "Cannot find a zone for PTR records. Use -p to disable auto-PTR-handling"; }
+	if ($errorNum == hostupd_conf::ERROR_CANT_RESOLVE)		{ $errorStr = "Can't resolve ". $additional_str; }
+	if ($errorNum == hostupd_conf::ERROR_TOO_MUCH2UPDATE)		{ $errorStr = "Can't update, there are more than one records of type ".$additional_str.",\n  Please delete them manually."; }
+	if ($errorNum == hostupd_conf::ERROR_CANT_GET_DOMAIN)		{ $errorStr = "Can't find the domain, either specify it in your resolv.conf ('domain' clause),\n  or use the -z parameter"; }
+	if ($errorNum == hostupd_conf::ERROR_CANT_OPEN)		{ $errorStr = "Can't open file ".$additional_str." - check the config"; }
+	if ($errorNum == hostupd_conf::ERROR_CANT_GET_DNS_SERVER)	{ $errorStr = "Can't find the DNS server from ".$additional_str."'s SOA record.. Is it the correct domain?"; }
+	if ($errorNum == hostupd_conf::ERROR_BAD_PARAM)		{ $errorStr = "Bad parameter was used: ".$additional_str; }
+	if ($errorNum == hostupd_conf::ERROR_BAD_IP)			{ $errorStr = "Bad A record value: make sure it's a legal IPv4"; }
+	if ($errorNum == hostupd_conf::ERROR_BAD_CNAME)		{ $errorStr = "Bad CNAME record value: you should use an FQDN here (e.g. host.full.domain)"; }
+	if ($errorNum == hostupd_conf::ERROR_BAD_MX)			{ $errorStr = "Bad MX record value: it should contain two space-seperated values (in quotes):\n  preference and dot-suffixed-domain, i.e. \"10 bla.foo.bar.\""; }
+	if ($errorNum == hostupd_conf::ERROR_ALREADY_EXISTS_DEL)	{ $errorStr = "The record you want to delete doesn't seem to exist:\n  ".$additional_str; }
+	if ($errorNum == hostupd_conf::ERROR_DIDNT_WORK)		{ $errorStr = "Although we've got no error, an additional check shows that your request wasn't commited!\n  weird..."; }
+	if ($errorNum == hostupd_conf::ERROR_DUP)			{ $errorStr = "This domain already has the same record with the EXACTLY same data!"; }
+	if ($errorNum == hostupd_conf::ERROR_CANT_MODIFY_PTR)		{ $errorStr = "Can't modify a PTR record- do you have permissions? Use -p to disable\n  auto-PTR-handling"; }
+	if ($errorNum == 0) {
+		$errorStr = "Unknown Error";
+		# Change the errorNum so we'll have an abnormal return value
+		$errorNum = 1;
+	}
+
+	print STDERR ("! ERROR #".$errorNum.": ".$errorStr."\n\n");
+	exit($errorNum);
+} # }}}
+
+# 
+# {{{ printVersion()
+#
+sub printVersion() {
+	print "Hostupd v".hostupd_conf::VERSION." - Author: Oren Held\n";
+} # }}}
+
+#
+# {{{ printUsage()
+#
+sub printUsage
+{
+	printVersion();
+	print "\nUSAGE: $0 <operation> <domain[.full.suffix.]> [rdata] [options]\n\n";
+
+	print "Operation: add | del
+domain   : The domain name you want to modify, either fqdn or not.
+rdata    : Here comes the data of the record, e.g. 192.168.0.1 when
+           using an A record. Required on 'add' mode.
+
+[options] can be:
+-f          Force
+-h          This help screen
+-l <ttl>    Override the default TTL with another value
+-n          Do nothing, for test/debug mode
+-p          Do NOT add a PTR record automatically
+-q          Quiet mode
+-s <server> Specify a dns server
+-t <type>   Type of record (RR). Default is A
+-u          Update record if already exists
+-v          Verbose mode (read: lots-of-info mode)
+-z <zone>   Specify the zone you want to use
+
+SEE MAN PAGE FOR MORE INFO
+";
+
+} # }}}
+
+#
+# {{{ getParams() is responsible for parameter checking and processing
+#
+sub getParams(@)
+{
+	my (@ARGV) = @_;
+	
+	# Should we display the usage screen and quit?
+	if (!scalar(@ARGV) || $ARGV[0] =~ /\-h$/ || $ARGV[0] =~ /\-\-help$/) {
+		printUsage(); exit(0);
+	}
+
+
+	for (my $i = 0; $i < scalar(@ARGV); $i++)
+	{
+		if ($ARGV[$i] =~ /^-z$/)		{ $zone = $ARGV[$i+1]; $i++; next; }
+		if ($ARGV[$i] =~ /^-f$/)		{ $forceMode = 1; next; }
+		if ($ARGV[$i] =~ /^-l$/)		{ $ttl = $ARGV[$i+1]; $i++; next; }
+		if ($ARGV[$i] =~ /^-n$/)	 	{ $testOnly = 1; next; }
+		if ($ARGV[$i] =~ /^-p$/)		{ $noptr = 1; next; }
+
+		if ($ARGV[$i] =~ /^-s$/)		{ $dns_servers[0] = $ARGV[$i+1]; $i++; next; }
+		if ($ARGV[$i] =~ /^-t$/)		{ $record_type = uc($ARGV[$i+1]); $i++; next; }
+		if ($ARGV[$i] =~ /^-u$/)		{ $updateMode = 1; next; }
+		if ($ARGV[$i] =~ /^-v$/)		{ $verbosity = hostupd_conf::VERBOSITY_HIGH; next; }
+		if ($ARGV[$i] =~ /^-q$/)		{ $verbosity = hostupd_conf::VERBOSITY_NONE; next; }
+		if ($ARGV[$i] =~ /^-h$/ ||
+		$ARGV[$i] =~ /^--help$/)		{ printUsage(); exit(0); }
+		if ($ARGV[$i] =~ /^--version$/)	{ printVersion(); exit(0); }
+
+		# If we get a parameter without a minus, it's probably:
+		# 1. operation   2. domain name   3. value (rdata)
+		if ($ARGV[$i] !~ /^-/)
+		{
+
+			# 1. Check if it's an operation
+			if (!defined($operation)) {
+				$_ = $ARGV[$i];
+				if ( grep(/^$_$/, keys(%allowed_operations)) ) {
+					$operation = $allowed_operations{$_};
+					next; # we're done.. skip the next stuff
+				}
+			}
+
+			# 2. Maybe it's a domain name?
+			if (!defined($domain_name)) {
+				$domain_name = $ARGV[$i];
+				next; # We're done.. skip the next stuff
+			}
+
+			# 3. Maybe it's the domain_name's value (rdata)?
+			if (!defined($rdata)) {
+				$rdata = $ARGV[$i];
+				next; # We're done.. skip the next stuff
+			}
+		}
+
+		exitError(hostupd_conf::ERROR_BAD_PARAM, $ARGV[$i]);
+	}
+
+	if (!defined($operation))	{ exitError(hostupd_conf::ERROR_WRONGOP); }
+	if (!$domain_name)		{ exitError(hostupd_conf::ERROR_NOHOST); }
+	if (!$record_type)		{ $record_type = "A";	}
+	if (!$rdata && $operation == hostupd_conf::OPERATION_ADD )	{ exitError(hostupd_conf::ERROR_NORDATA); }
+	check_rdata($rdata, $record_type);
+	if (!$zone)			{ $zone = &getResolvconfDomain() || exitError(hostupd_conf::ERROR_CANT_GET_DOMAIN); }
+	if ($#dns_servers < 0)
+	{
+		# We need initial nameservers in order to find the real ones
+		@dns_servers = &getResolvconfNameservers();
+
+		# now we find the real one
+		@dns_servers = (getSOA($zone)) || exitError(hostupd_conf::ERROR_CANT_GET_DNS_SERVER, $zone);
+	}
+
+	# Should we add the 'zone suffix' dot @ end, or not?
+	if ($domain_name !~ /\.$/) {
+		if ($domain_name =~ /$zone$/) {
+			$domain_name .= ".";
+		}
+		else {
+			$domain_name .= "." .$zone. ".";
+		}
+	}
+
+	if ($verbosity == hostupd_conf::VERBOSITY_HIGH)
+	{
+		print "Zone       : ".$zone."\n";
+		print "DNS Servers: ";
+		foreach (@dns_servers)
+		{
+			print $_." ";
+		};
+		print "\n";
+		print "Domain Name: ".$domain_name."\n";
+		print "-------------";
+		# If you wonder what it does... try to figure out by yourself :)
+		for (my $i = 0; $i < length($domain_name); $i++) { print "-"; }
+		print "\n\n";
+	}
+} # }}}
+
+
+
+
+
+# /
+# / General DNS Functions
+# /
+
+#
+# {{{ check_rdata() - Checks whether the inserted value is legal.
+# 'legal' is a specific definition for each type of record..
+#
+sub check_rdata
+{
+	my ($rdata, $type) = @_;
+
+	if (!$rdata) { return; }
+
+	if ($type eq "A") {
+		# Make sure our rdata is a legal IPv4. quite ugly.. though!
+		if ( ($rdata =~ /^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$/) && ($1 <= 255 && $2 <= 255 && $3 <= 255 && $4 <=255 && $1 >= 0 && $2 >= 0 && $3 >= 0 && $4 >=0) ) {
+			return;
+		} 
+		else {
+			exitError(hostupd_conf::ERROR_BAD_IP);
+		}
+	}
+
+	if ($type eq "CNAME") {
+		if ($rdata !~ /\./) {
+			exitError(hostupd_conf::ERROR_BAD_CNAME);
+		}
+	}
+
+	if ($type eq "MX") {
+		if ($rdata !~ /\.$/ || $rdata !~ /^\d+\s/) {
+			exitError(hostupd_conf::ERROR_BAD_MX);
+		}
+	}
+} # }}}
+
+
+#
+# {{{ Split RRs() - Splits a RR of type 'A' into host and address, 
+# and returns them.
+#
+sub splitRR
+{
+	my ($str) = @_;
+	my $host;
+	my $address;
+
+	if ($str =~ /^([\w\.\_]+)/) { $host = $1; }
+	if ($str =~ /([\w\.\_]+)$/) { $address = $1; }
+
+	my @a = ($host, $address);
+	return @a;
+} # }}}
+
+#
+# {{{ viewDomain() - prints the domain's records
+#
+sub viewDomain
+{
+	my ($domain, @dns_servers) = @_;
+
+	my $res = new Net::DNS::Resolver;
+
+	$res->nameservers(@dns_servers);
+
+	my $packetData = $res->send($domain, "ANY");
+	if (!$packetData) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, $domain); }
+
+	if ($packetData->answer)
+	{
+		print "\n; ".$domain." currently consists of:\n";
+		foreach my $rr ($packetData->answer)
+		{
+			$rr->print;
+		}
+	}
+	else
+	{
+		print "\n; $domain is now EMPTY!\n";
+	}
+} # }}}
+
+#
+# {{{ getResolvconfDomain() returns the domain defined in resolv.conf
+#
+sub getResolvconfDomain() {
+	my $fh = new FileHandle(hostupd_conf::RESOLVCONF);
+	my $domain;
+	
+	while (<$fh>) {
+		if (/^domain\s+([\w\.\-]+)/) {
+			$domain = $1;
+			last;
+		}
+	}
+
+	$fh->close;
+
+	return $domain;
+} # }}}
+
+#
+# {{{ getResolvconfNameservers() returns the nameservers defined in resolv.conf
+#
+sub getResolvconfNameservers() {
+	my $fh = new FileHandle(hostupd_conf::RESOLVCONF);
+	my @nameservers;
+	
+	while (<$fh>) {
+		if (/^nameserver\s+([\w\.\-]+)/) {
+			push(@nameservers, $1);
+			next;
+		}
+	}
+
+	$fh->close;
+
+	return @nameservers;
+} # }}}
+
+#
+# {{{ getRRs() - returns an array of all the RR lines of $hostname of 
+# the type $record_type
+#
+sub getRRs
+{
+	my ($hostname, $record_type, $res) = @_;
+
+	my @line;
+
+	my $packetData = $res->send($hostname, "ANY");
+	if (!$packetData) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, $hostname); }
+
+	my $i = 0;
+	foreach my $rr ($packetData->answer) {
+		# Good, but is it the record type we were looking for?
+		# (And also the same hostname.. it might be a cname and we get
+		# ANOTHER host with its a record for example)
+		if ($rr->type eq $record_type && $rr->name."." eq $hostname) {
+			$line[$i] = $rr->string;
+			$i++;
+		}
+		else {
+			# Well, the answer is NO. let's try the next result.
+			next;
+		}
+	}
+	
+	return @line;
+} # }}}
+
+#
+# {{{ getSOA() Returns the SOA value if the given domain has a SOA record, 
+# or else returns 0.
+#
+sub getSOA($)
+{
+	my ($domain) = @_;
+	
+	my $res = new Net::DNS::Resolver;
+	
+
+	my $packetData = $res->send($domain, "SOA");
+
+	if (!$packetData) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, $domain); }
+
+	foreach my $rr ($packetData->answer)
+	{
+		if ($rr->type eq "SOA") { return $rr->mname; }
+	}
+
+	return 0;
+} # }}}
+
+
+
+
+
+
+
+# /
+# / PTR Handling Functions
+# /
+
+#
+# {{{ getPtrZone() returns the ptr zone of a given IP address
+# (i.e. 192.168.0.1 is given, it might return 168.192.in-addr.arpa.)
+#
+sub getPtrZone
+{
+	my ($ip) = @_;
+
+	my $str;
+
+	if ($ip =~ /([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/)
+	{
+		$str = $4 .".". $3 .".". $2 .".". $1 .".in-addr.arpa";
+	}
+	for (my $i = 0; !getSOA($str); $i++)
+	{
+		if ($i > 3) { return 0; }
+		if ($str =~ /^([0-9]{1,3})\.(.*)$/)
+		{
+			$str = $2;
+		}
+	}
+
+	return $str;
+} # }}}
+
+#
+# {{{ makePtrAddress() converts IPv4 addr to its reverse-resolution domain.
+#
+sub makePtrAddress
+{
+	my ($ip) = @_;
+
+	if ($ip =~ /([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/)
+	{
+		return $4.".".$3.".".$2.".".$1.".in-addr.arpa.";
+	}
+
+	return 0;
+} # }}}
+
+#
+# {{{ UpdatePtrRecord() - Adds or removes a PTR record for reverse-dns.
+#
+sub updatePtrRecord
+{
+	my ($operation, $hostname, $address) = @_;
+
+	my $ptrZone = getPtrZone($address);
+
+	if (!$ptrZone) { exitError(hostupd_conf::ERROR_NO_PTR_ZONE); }
+
+	my $update	= new Net::DNS::Update($ptrZone);
+	my $res		= new Net::DNS::Resolver;
+
+	$res->nameservers(@dns_servers);
+
+	if ($operation == hostupd_conf::OPERATION_ADD)
+	{
+		if ($verbosity >= hostupd_conf::VERBOSITY_NORMAL) { print "- Adding a PTR record\n"; }
+		$update->push("update", rr_add(makePtrAddress($address)." PTR ".$hostname));
+		$modified = 1;
+	}
+		
+	if ($operation == hostupd_conf::OPERATION_DEL)
+	{
+		if ($verbosity >= hostupd_conf::VERBOSITY_NORMAL) { print "- Deleting a PTR record\n"; }
+		$update->push("update", rr_del(makePtrAddress($address)." PTR ".$hostname));
+		$modified = 1;
+	}
+
+	# Now send the packet with the updates
+	if (!$testOnly) {
+		my $reply = $res->send($update);
+		if ( !defined($reply) || !$reply || $reply->header->rcode ne "NOERROR" ) {
+			exitError(hostupd_conf::ERROR_CANT_MODIFY_PTR);
+		}
+	}
+	
+} # }}}
+
+
+# /
+# / DDNS-Based Functions (add, del and stuff)
+# /
+
+#
+# {{{ commitDNSQuery() gets the update packets and sends them to the
+# dns (with error checking and stuff)
+#
+sub commitDNSQuery($$) {
+	my ($update, $res) = @_;
+	
+#	if ($verbosity) { print "* Commiting changes... "; }
+	if (!$testOnly)
+	{
+		my $reply = $res->send($update);
+
+		if (($reply) && ($reply->header->rcode eq "NOERROR"))
+		{
+#			if ($verbosity) { print "Done!\n"; }
+		}
+		else
+		{
+			if (!$reply) 
+			{
+				exitError(hostupd_conf::ERROR_DNS_CRITICAL, $reply->errorstring);
+			}
+			else
+			{
+				exitError(hostupd_conf::ERROR_DNS_CANT_UPDATE, $reply->header->rcode);
+			}
+		}
+	}
+	else
+	{
+		# if testonly mode!
+		if ($verbosity >= hostupd_conf::VERBOSITY_NORMAL) { print "! Doing nothing, in test-only mode\n"; }
+	}
+} # }}}
+
+#
+# {{{ massDelete() deletes record after record from the given domain
+# Also deletes ptr records if !$noptr and $record_type eq "A"
+#
+sub massDelete
+{
+	my ($domain_name, $record_type, $res, $update) = @_;
+	my $ptrhost;
+	my $ptraddress;
+
+	my @line = getRRs($domain_name, $record_type, $res);
+	foreach $_ (@line)
+	{
+		if ($record_type eq "A" && !$noptr)
+		{
+			# Clean the PTR records
+			($ptrhost, $ptraddress) = splitRR($_);
+			updatePtrRecord($operation, $domain_name, $ptraddress);
+		}
+		if ($verbosity >= hostupd_conf::VERBOSITY_NORMAL) { print "- Deleting ".$_."\n"; }
+		$update->push("update", rr_del($_));
+		$modified = 1;
+	}
+} # }}}
+
+#
+# {{{ recordExists() gets a domain name, record type, and returns
+# true if there's indeed such a record or not.
+# Optionally the record's data can be given as a parameter, so we
+# can make sure this specific record with the same data exists.
+#
+sub recordExists($$$;$) {
+	my ($res, $domain_name, $record_type, $data) = @_;
+
+	if ($domain_name =~ /\.$/) { chop($domain_name); }
+
+	my $packet_data = $res->send($domain_name, $record_type);
+	if (!$packet_data) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, $domain_name); }
+	
+	# Let's check if the specific data exists in one of the records..
+	foreach my $rr ($packet_data->answer) {
+		# print $rr->name ." =? ". $domain_name." && ".$rr->type ." =? ". $record_type ." && ".$rr->rdatastr ." =? ". $data."\n";
+		if ($rr->name eq $domain_name && $rr->type eq $record_type) {
+			if (!$data) {
+				return 1; # record exists, return 1
+			}
+			else { # We should also compare the data
+
+				# Add a trailing dot if needed for comparison
+				if ($rr->rdatastr =~ /\.$/ && $data !~ /\.$/) {
+					$data .= ".";
+				}
+
+				if ($rr->rdatastr eq $data) {
+					# record exists and contains
+					# the same data..
+					return 1;
+				}
+			}
+		}
+	}
+
+	return 0;
+} # }}}
+
+#
+# # {{{ existsDecision() decides what to do if the record that we want to *ADD*
+# already exists. It must be an add operation, and the record must exist- we
+# don't check it in this function(!). Decision may be quit, ignore or delete.
+# it uses the $force / $update vars to decide.
+#
+sub existsDecision($$$$$)
+{
+	my ($domain_name, $rdata, $record_type, $res, $update) = @_;
+	my @recValue;
+	my $ptrhost;
+	my $ptraddress;
+
+	if ((@recValue = getRRs($domain_name, $record_type, $res)))
+	{
+		if ($verbosity >= hostupd_conf::VERBOSITY_NORMAL)
+		{
+			print "! Another record(s) of the same type already exists:\n";
+			foreach $_ (@recValue)
+			{
+				print $_. "\n";
+			}
+			
+		}
+		if (!$forceMode && !$updateMode)
+		{
+			exitError(hostupd_conf::ERROR_ALREADY_EXISTS_ADD, "the domain \'$domain_name\' already has a record of type $record_type");
+		}
+		if ($forceMode && $verbosity >= hostupd_conf::VERBOSITY_NORMAL)
+		{
+			print "- Force mode used, adding anyway\n";
+		}
+		else
+		{
+			if ($updateMode)
+			{ 
+				# Let'z delete the old records
+				# (Update is actually delete and then add)
+				if (scalar(@recValue) > 1)
+				{
+					exitError(hostupd_conf::ERROR_TOO_MUCH2UPDATE, $record_type);
+				}
+
+				if ($verbosity >= hostupd_conf::VERBOSITY_NORMAL) {
+					print "- Update mode used, updating with the new value\n";
+				}
+				# if it's an A record and !$noptr del the PTR as well
+				if ($record_type eq "A" && !$noptr)
+				{
+					($ptrhost, $ptraddress) = splitRR($recValue[0]);
+					updatePtrRecord(hostupd_conf::OPERATION_DEL, $domain_name, $ptraddress);
+				}
+				#del the record
+				if ($verbosity >= hostupd_conf::VERBOSITY_NORMAL) {
+					print "- Deleting an A record\n";
+				}
+				$update->push("update", rr_del($recValue[0]));
+				$modified = 1;
+			}
+		}
+	}
+} # }}}
+
+#
+# {{{ startWorking() is one is the 'main' function..
+#
+sub startWorking($$$$)
+{
+	my ($domain_name, $record_type, $ttl, $rdata) = @_;
+
+	my $update	= new Net::DNS::Update($zone);
+	my $res		= new Net::DNS::Resolver;
+
+
+	$res->nameservers(@dns_servers);
+
+	if (!$noptr && $record_type eq "A" && $rdata)
+	{
+		# Update a pointer (PTR) record
+		updatePtrRecord($operation, $domain_name, $rdata);
+	}
+
+	# Here we add stuff
+	if ($operation == hostupd_conf::OPERATION_ADD)
+	{
+		# Before adding- does a record from the same type exist
+		# already?
+		if (recordExists($res, $domain_name, $record_type)) {
+			# Maybe it's even exactly what we wanted to add??
+			if (recordExists($res, $domain_name, $record_type, $rdata)) {
+				exitError(hostupd_conf::ERROR_DUP);
+			}
+			existsDecision($domain_name, $rdata, $record_type, $res, $update);
+		}
+		if ($verbosity >= hostupd_conf::VERBOSITY_NORMAL) { print "- Adding a(n) ".$record_type." record\n"; }
+		$update->push("update", rr_add($domain_name." ".$ttl." ".$record_type." ".$rdata));
+		commitDNSQuery($update, $res);
+
+		# Make sure it was indeed added
+		if (!recordExists($res, $domain_name, $record_type, $rdata)) {
+			exitError(hostupd_conf::ERROR_DIDNT_WORK);
+		}
+	}
+	else
+	{
+		# Here we delete stuff
+		if ($operation == hostupd_conf::OPERATION_DEL)
+		{
+			# Does the record we want to delete exist anyway?
+			if (!recordExists($res, $domain_name, $record_type, $rdata)) {
+				my $str = "\'$domain_name\' doesn't have a(n) $record_type record ";
+				if ($rdata) { $str .= "containing \'".$rdata."\' as data "; }; 
+				$str .= "anyway..";
+				exitError(hostupd_conf::ERROR_ALREADY_EXISTS_DEL, $str);
+			}
+			# Normal delete, if we have an rdata
+			if ($rdata)
+			{
+				$update->push("update", rr_del($domain_name." ".$record_type." ".$rdata));
+				$modified = 1;
+				if ($verbosity >= hostupd_conf::VERBOSITY_NORMAL) { print "- Deleting a(n) ".$record_type." record\n"; }
+			}
+			else
+			{
+				massDelete($domain_name, $record_type, $res, $update);
+			}
+			if ($modified) {
+				commitDNSQuery($update, $res);
+				$modified = 0;
+			}
+
+			# Make sure it was indeed deleted
+			if (recordExists($res, $domain_name, $record_type, $rdata)) {
+				exitError(hostupd_conf::ERROR_DIDNT_WORK);
+			}
+		}
+	}
+
+
+	# Commit all the changes we made with $update->push, if any.
+	#if ($modified) {
+	#	commitDNSQuery($update, $res);
+	#}
+	#else {
+	#	if ($verbosity) { print ("No changes were made!\n"); }
+	#}
+} # }}}
+
+##################### Here functions end #######################
+
+#
+# HERE WE START
+#
+
+getParams(@ARGV);
+startWorking($domain_name, $record_type, $ttl, $rdata);
+if ($verbosity == hostupd_conf::VERBOSITY_HIGH) { viewDomain($domain_name, @dns_servers); }
+print ("\n");
+
+exit(0);
+
