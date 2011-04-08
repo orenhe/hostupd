@@ -4,7 +4,7 @@
 #
 # HOSTUPD                                       
 # This perl script allows adding stuff to the dns using Dynamic DNS (RFC 2136)
-# Copyright (C) 2002  Oren Held
+# Copyright (C) 2002, 2011 Oren Held
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -111,7 +111,7 @@ sub exitError
 # {{{ printVersion()
 #
 sub printVersion() {
-	print "Hostupd v".hostupd_conf::VERSION." - Author: Oren Held\n";
+	print "Hostupd v".hostupd_conf::VERSION."\n";
 } # }}}
 
 #
@@ -658,7 +658,7 @@ sub existsDecision($$$$$)
 		else
 		{
 			if ($updateMode)
-			{ 
+			{
 				# Let'z delete the old records
 				# (Update is actually delete and then add)
 				if (scalar(@recValue) > 1)
@@ -675,7 +675,7 @@ sub existsDecision($$$$$)
 					($ptrhost, $ptraddress) = splitRR($recValue[0]);
 					updatePtrRecord(hostupd_conf::OPERATION_DEL, $domain_name, $ptraddress);
 				}
-				#del the record
+				# del the record
 				if ($verbosity >= hostupd_conf::VERBOSITY_NORMAL) {
 					print "- Deleting an A record\n";
 				}
@@ -779,7 +779,9 @@ sub startWorking($$$$)
 
 getParams(@ARGV);
 startWorking($domain_name, $record_type, $ttl, $rdata);
-if ($verbosity == hostupd_conf::VERBOSITY_HIGH) { viewDomain($domain_name, @dns_servers); }
+if ($verbosity == hostupd_conf::VERBOSITY_HIGH) {
+    viewDomain($domain_name, @dns_servers);
+}
 print ("\n");
 
 exit(0);

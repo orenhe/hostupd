@@ -17,7 +17,7 @@ use constant RESOLVCONF => "/etc/resolv.conf";
 #
 # OTHER DEFINE STUFF
 #
-use constant VERSION => "0.92";
+use constant VERSION => "0.93";
 use constant OPERATION_ADD	=> 1;
 use constant OPERATION_DEL	=> 2;
 
