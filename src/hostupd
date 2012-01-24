@@ -217,7 +217,7 @@ sub getParams(@)
 		@dns_servers = &getResolvconfNameservers();
 
 		# now we find the real one
-		@dns_servers = (getSOA($zone)) || exitError(hostupd_conf::ERROR_CANT_GET_DNS_SERVER, $zone);
+		@dns_servers = (getSOA($zone, 1)) || exitError(hostupd_conf::ERROR_CANT_GET_DNS_SERVER, $zone);
 	}
 
 	# Should we add the 'zone suffix' dot @ end, or not?
@@ -407,9 +407,11 @@ sub getRRs
 # {{{ getSOA() Returns the SOA value if the given domain has a SOA record, 
 # or else returns 0.
 #
-sub getSOA($)
+# If SOA query fails, returns 0 or dies if $fatal == 1.
+#
+sub getSOA($;$)
 {
-	my ($domain) = @_;
+	my ($domain, $fatal) = @_;
 	
 	my $res = new Net::DNS::Resolver;
 
@@ -417,7 +419,17 @@ sub getSOA($)
 
 	my $packetData = $res->send($domain, "SOA");
 
-	if (!$packetData) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, "getSOA $domain"); }
+	if (!$packetData)
+	{
+		if (defined($fatal) && $fatal == 1)
+		{
+			exitError(hostupd_conf::ERROR_CANT_RESOLVE, "getSOA $domain");
+		}
+		else
+		{
+			return 0;
+		}
+	}
 
 	foreach my $rr ($packetData->answer)
 	{
