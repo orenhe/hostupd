@@ -344,6 +344,7 @@ sub getResolvconfDomain() {
 	while (<$fh>) {
 		if (/^domain\s+([\w\.\-]+)/) {
 			$domain = $1;
+			$domain =~ s/\.$//;
 			last;
 		}
 	}
