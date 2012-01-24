@@ -521,6 +521,12 @@ sub updatePtrRecord
 		$modified = 1;
 	}
 
+	if ( hostupd_conf::SIGNED_UPDATE )
+	{
+		if ($verbosity >= hostupd_conf::VERBOSITY_HIGH) { print "- Signing update transaction\n"; }
+		$update->sign_tsig(hostupd_conf::UPDATE_KEYNAME, hostupd_conf::UPDATE_KEY);
+	}
+
 	# Now send the packet with the updates
 	if (!$testOnly) {
 		my $reply = $res->send($update);
@@ -546,6 +552,12 @@ sub commitDNSQuery($$) {
 #	if ($verbosity) { print "* Commiting changes... "; }
 	if (!$testOnly)
 	{
+		if ( hostupd_conf::SIGNED_UPDATE )
+		{
+			if ($verbosity >= hostupd_conf::VERBOSITY_HIGH) { print "- Signing update transaction\n"; }
+			$update->sign_tsig(hostupd_conf::UPDATE_KEYNAME, hostupd_conf::UPDATE_KEY);
+		}
+
 		my $reply = $res->send($update);
 
 		if (($reply) && ($reply->header->rcode eq "NOERROR"))

@@ -13,6 +13,10 @@ use strict;
 # CONFIGURATIONS, FELL FREE TO CHANGE
 #
 use constant RESOLVCONF => "/etc/resolv.conf";
+use constant SIGNED_UPDATE => 0; # Put 0 to disable; 1 to enable.
+use constant UPDATE_KEYNAME => 'KEYNAME_STRING'; # The nsupdate key name.
+use constant UPDATE_KEY => 'KEY_STRING'; # The nsupdate key.
+
 
 #
 # OTHER DEFINE STUFF
