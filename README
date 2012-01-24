@@ -1,13 +1,21 @@
+=======
 Hostupd
--------
+=======
+
+PROJECT PAGE
+------------
+For latest info, files, bug reports, pull request: https://github.com/orenhe/hostupd
+
 
 WHAT IS HOSTUPD?
-hostupd is a command-line tool which allows the user to update a dns server
-which supports dynamic updates (rfc2136), such as bind >= 8. Its main goal
-is to simplify the dns-updating task, but to remain flexible.
+----------------
+hostupd is a simple DNS update command-line tool.
+Its main goal is to simplify the dns-updating task, (e.g. a simpler alternative to nsupdate), yet remain flexible. 
 
+Hostupd is written in perl and is based on the Net::DNS module, which implements the client side of rfc2136 (DNS UPDATE). It'll work only if the DNS server supports DNS updates.
 
 FEATURES
+--------
 Hostupd actually does what bind's nsupdate does, but contains additional
 features which hopefully will make your life easier:
 - Fast deletion of all the records of some type with a simple command
@@ -20,22 +28,18 @@ features which hopefully will make your life easier:
   disabled.
 and some more..
 
-
 REQUIREMENTS
-Hostupd was tested with bind 9, but should work with any dns server which
-implements the Dynamic DNS rfc well. Also, a perl with Net::DNS module is 
-needed. Get it from cpan.org.
-
+------------
+* Perl Net::DNS module
+   - apt: apt-get install libnet-dns-perl
+   - yum: yum install Perl-Net_DNS
+   - Or manually from cpan...
 
 INSTALLATION
+------------
 See the 'INSTALL' file.
 
-
 LICENSE
+-------
 hostupd is released under the GPL, see the 'COPYING' file.
-
-
-CONTACT/AUTHOR
-For any comment/suggestion/bugs/money, feel free to email me to
-oren@deot.net
 
