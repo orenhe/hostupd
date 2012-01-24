@@ -2,7 +2,7 @@
 
 ##############################################################################
 #
-# HOSTUPD                                       
+# HOSTUPD
 # This perl script allows adding stuff to the dns using Dynamic DNS (RFC 2136)
 # Copyright (C) 2002, 2011 Oren Held
 #
@@ -318,7 +318,7 @@ sub viewDomain
 	$res->nameservers(@dns_servers);
 
 	my $packetData = $res->send($domain, "ANY");
-	if (!$packetData) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, $domain); }
+	if (!$packetData) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, "viewDomain $domain"); }
 
 	if ($packetData->answer)
 	{
@@ -383,7 +383,7 @@ sub getRRs
 	my @line;
 
 	my $packetData = $res->send($hostname, "ANY");
-	if (!$packetData) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, $hostname); }
+	if (!$packetData) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, "getRRs $record_type $hostname"); }
 
 	my $i = 0;
 	foreach my $rr ($packetData->answer) {
@@ -413,11 +413,11 @@ sub getSOA($)
 	
 	my $res = new Net::DNS::Resolver;
 
-        $res->nameservers(@dns_servers);
+	$res->nameservers(@dns_servers);
 
 	my $packetData = $res->send($domain, "SOA");
 
-	if (!$packetData) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, $domain); }
+	if (!$packetData) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, "getSOA $domain"); }
 
 	foreach my $rr ($packetData->answer)
 	{
@@ -595,7 +595,7 @@ sub recordExists($$$;$) {
 	if ($domain_name =~ /\.$/) { chop($domain_name); }
 
 	my $packet_data = $res->send($domain_name, $record_type);
-	if (!$packet_data) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, $domain_name); }
+	if (!$packet_data) { exitError(hostupd_conf::ERROR_CANT_RESOLVE, "recordExists $domain_name"); }
 	
 	# Let's check if the specific data exists in one of the records..
 	foreach my $rr ($packet_data->answer) {
@@ -780,7 +780,7 @@ sub startWorking($$$$)
 getParams(@ARGV);
 startWorking($domain_name, $record_type, $ttl, $rdata);
 if ($verbosity == hostupd_conf::VERBOSITY_HIGH) {
-    viewDomain($domain_name, @dns_servers);
+	viewDomain($domain_name, @dns_servers);
 }
 print ("\n");
 
