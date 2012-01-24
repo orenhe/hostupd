@@ -21,7 +21,7 @@ use constant UPDATE_KEY => 'KEY_STRING'; # The nsupdate key.
 #
 # OTHER DEFINE STUFF
 #
-use constant VERSION => "0.93";
+use constant VERSION => "0.94";
 use constant OPERATION_ADD	=> 1;
 use constant OPERATION_DEL	=> 2;
 
